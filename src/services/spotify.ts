@@ -1,4 +1,5 @@
 import SpotifyWebApi from 'spotify-web-api-node';
+import axios from 'axios';
 import { SpotifyAuth } from '../auth/spotify-auth.js';
 import { loadConfig } from '../config/env.js';
 
@@ -66,14 +67,11 @@ export class SpotifyService {
 
   async findPlaylist(name: string): Promise<string | null> {
     try {
-      const user = await this.api.getMe();
-      const userId = user.body.id;
-
       let offset = 0;
       const limit = 50;
 
       while (true) {
-        const playlists = await this.api.getUserPlaylists(userId, { limit, offset });
+        const playlists = await this.api.getUserPlaylists({ limit, offset });
 
         for (const playlist of playlists.body.items) {
           if (playlist.name === name) {
@@ -97,13 +95,17 @@ export class SpotifyService {
   async createPlaylist(name: string, description: string = ''): Promise<string> {
     try {
       const user = await this.api.getMe();
-      const playlist = await this.api.createPlaylist(name, {
-        description,
-        public: true,
-      });
+      const accessToken = this.api.getAccessToken();
+
+      // Usar chamada direta pois a biblioteca pode estar desatualizada
+      const response = await axios.post(
+        `https://api.spotify.com/v1/users/${user.body.id}/playlists`,
+        { name, description, public: true },
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
 
       console.log(`✓ Playlist "${name}" criada`);
-      return playlist.body.id;
+      return response.data.id;
     } catch (error) {
       console.error('Erro ao criar playlist:', error);
       throw error;
@@ -126,13 +128,23 @@ export class SpotifyService {
 
   async replacePlaylistTracks(playlistId: string, trackUris: string[]): Promise<void> {
     try {
+      const accessToken = this.api.getAccessToken();
       const batchSize = 100;
 
-      await this.api.replaceTracksInPlaylist(playlistId, trackUris.slice(0, batchSize));
+      // Usar o novo endpoint /items (migração Spotify fevereiro 2026)
+      await axios.put(
+        `https://api.spotify.com/v1/playlists/${playlistId}/items`,
+        { uris: trackUris.slice(0, batchSize) },
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
 
       for (let i = batchSize; i < trackUris.length; i += batchSize) {
         const batch = trackUris.slice(i, i + batchSize);
-        await this.api.addTracksToPlaylist(playlistId, batch);
+        await axios.post(
+          `https://api.spotify.com/v1/playlists/${playlistId}/items`,
+          { uris: batch },
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
         await this.delay(100);
       }
 
